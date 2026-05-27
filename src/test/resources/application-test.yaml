@@ -1,0 +1,21 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+
+
+geolocation:
+  ip-api:
+    connect-timeout: 200ms
+    read-timeout: 200ms
+
+resilience4j:
+  retry:
+    instances:
+      geoLocation:
+        wait-duration: 20ms
+
+
+

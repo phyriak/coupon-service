@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: coupon-service
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+
+geolocation:
+  ip-api:
+    url: ${GEO_API_URL:https://ip-api.com/json/{ip}?fields=countryCode,status}
+    connect-timeout: 1s
+    read-timeout: 1s
+
+resilience4j:
+  retry:
+    instances:
+      geoLocation:
+        max-attempts: 3
+        wait-duration: 200ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+
+logging:
+  level:
+    com.example.coupon: INFO
