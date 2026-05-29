@@ -1,7 +1,6 @@
 package com.example.coupon.repository;
 
 import com.example.coupon.domain.model.Coupon;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -13,12 +12,11 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
 
     Optional<Coupon> findByCode(String code);
 
-    boolean existsByCode(String code);
-
     /**
-     * Returns number of affected rows:
-     * - 1 → success
-     * - 0 → concurrent update won the race OR limit already reached
+     * Atomically increments coupon usage only if usage limit
+     * has not been reached.
+     *
+     * @return number of updated rows (0 if limit reached)
      */
     @Modifying
     @Query("""

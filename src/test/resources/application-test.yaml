@@ -8,14 +8,15 @@ spring:
 
 geolocation:
   ip-api:
-    connect-timeout: 200ms
-    read-timeout: 200ms
+    connect-timeout: 500ms
+    read-timeout: 500ms
 
 resilience4j:
   retry:
     instances:
       geoLocation:
-        wait-duration: 20ms
-
-
-
+        max-attempts: 3
+        wait-duration: 1ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException

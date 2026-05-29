@@ -13,6 +13,7 @@ import org.springframework.web.client.RestClient;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Optional;
 
 /**
  * Geolocation implementation using ip-api.com
@@ -28,10 +29,10 @@ public class IpApiGeoLocationService implements GeoLocationService {
 
     @Retry(name = "geoLocation", fallbackMethod = "resolveFallback")
     @Override
-    public Country resolveCountry(String ipAddress) {
+    public Optional<Country> resolveCountry(String ipAddress) {
         if (isPrivateOrLoopback(ipAddress)) {
-            log.debug("Private/loopback IP detected ({}), skipping geolocation", ipAddress);
-            return Country.UNKNOWN;
+            log.info("Private/loopback IP detected ({}), skipping geolocation", ipAddress);
+            return Optional.empty();
         }
 
         IpApiResponse response = restClient.get()
@@ -41,12 +42,12 @@ public class IpApiGeoLocationService implements GeoLocationService {
 
         if (response == null || !"success".equals(response.status())) {
             log.warn("ip-api.com returned non-success for IP {}: {}", ipAddress, response);
-            return Country.UNKNOWN;
+            return Optional.empty();
         }
 
         Country resolved = Country.fromCode(response.countryCode());
-        log.debug("Resolved IP {} -> country {}", ipAddress, resolved);
-        return resolved;
+        log.info("Resolved IP {} -> country {}", ipAddress, resolved);
+        return Optional.of(resolved);
     }
 
     private boolean isPrivateOrLoopback(String ip) {
@@ -58,9 +59,9 @@ public class IpApiGeoLocationService implements GeoLocationService {
         }
     }
 
-    private Country resolveFallback(String ipAddress, Exception ex) {
+    private Optional<Country> resolveFallback(String ipAddress, Exception ex) {
         log.warn("GeoLocation failed for IP {} after retries: {}", ipAddress, ex.getMessage());
-        return Country.UNKNOWN;
+        return Optional.empty();
     }
 }
 

@@ -21,6 +21,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -34,8 +36,7 @@ public class CouponServiceImpl implements CouponService {
     @Override
     @Transactional
     public CouponResponse createCoupon(CreateCouponRequest request) {
-        String normalizedCode = request.code().toUpperCase();
-        validator.validateCreate(normalizedCode);
+        String normalizedCode = request.code().toUpperCase(Locale.ROOT);
 
         //To avoid Race condition, unique constraint + exception handling for rollback
         try {
@@ -53,11 +54,11 @@ public class CouponServiceImpl implements CouponService {
     @Override
     @Transactional
     public UseCouponResponse useCoupon(UseCouponRequest request, String ipAddress) {
-        String normalizedCode = request.code().toUpperCase();
+        String normalizedCode = request.code().toUpperCase(Locale.ROOT);
         String userId = request.userId();
 
-        log.info("Attempting to use coupon: code={}, userId={}, ip={}",
-                normalizedCode, userId, ipAddress);
+        log.info("Attempting to use coupon: code={}, userIdHashcode={}, ipHashcode={}",
+                normalizedCode, userId.hashCode(), ipAddress.hashCode());
 
         Coupon coupon = couponRepository.findByCode(normalizedCode)
                 .orElseThrow(() -> new CouponNotFoundException(normalizedCode));
@@ -75,7 +76,7 @@ public class CouponServiceImpl implements CouponService {
             throw new CouponAlreadyUsedException(normalizedCode, userId);
         }
 
-        log.info("Coupon used: code={}, userId={}, ip={}", normalizedCode, userId, ipAddress);
+        log.info("Coupon used: code={}, userIdHashcode={}, ipHashcode={}", normalizedCode, userId.hashCode(), ipAddress.hashCode());
         return UseCouponResponse.success(normalizedCode, userId);
     }
 }

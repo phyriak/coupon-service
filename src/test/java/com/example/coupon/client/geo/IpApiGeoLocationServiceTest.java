@@ -1,91 +1,63 @@
 package com.example.coupon.client.geo;
 
-import com.example.coupon.config.IpApiProperties;
+import com.example.coupon.BaseIntegrationTest;
 import com.example.coupon.domain.model.Country;
 import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.web.client.RestClient;
-
-import java.io.IOException;
-import java.time.Duration;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@ExtendWith(MockitoExtension.class)
-class IpApiGeoLocationServiceTest {
 
-    private MockWebServer mockWebServer;
+class IpApiGeoLocationServiceTest extends BaseIntegrationTest {
+    public static final String DEFAULT_PRIVATE_IP = "0:0:0:0:0:0:0:1";
+    public static final String PUBLIC_IP_ADDRESS = "8.8.8.8";
 
-    @Mock
-    private RestClient restClient;
-
-    @Mock
-    private IpApiProperties properties;
-
+    @Autowired
     private IpApiGeoLocationService service;
 
-    @BeforeEach
-    void setUp() throws IOException {
-        mockWebServer = new MockWebServer();
-        mockWebServer.start();
-
-        IpApiProperties properties = new IpApiProperties(
-                mockWebServer.url("/json/{ip}?fields=countryCode,status").toString(),
-                Duration.ofSeconds(2),
-                Duration.ofSeconds(2)
-        );
-
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(properties.connectTimeout());
-        factory.setReadTimeout(properties.readTimeout());
-
-        RestClient restClient = RestClient.builder()
-                .requestFactory(factory)
-                .build();
-
-        service = new IpApiGeoLocationService(restClient, properties);
-    }
-
-    @AfterEach
-    void tearDown() throws IOException {
-        mockWebServer.shutdown();
+    private static MockResponse jsonResponse(String body) {
+        return new MockResponse()
+                .addHeader("Content-Type", "application/json")
+                .setBody(body);
     }
 
     @Test
-    void shouldReturnUnknownWhenApiReturnsNonSuccess() {
-        mockWebServer.enqueue(new MockResponse()
-                .setBody("""
-                        {"status":"fail","countryCode":null}
-                        """)
-                .addHeader("Content-Type", "application/json"));
+    void shouldResolveCountryOnSuccessResponse() {
+        mockWebServer.enqueue(jsonResponse("""
+                {"status":"success","countryCode":"DE"}
+                """));
 
-        assertThat(service.resolveCountry("1.2.3.4")).isEqualTo(Country.UNKNOWN);
+        assertThat(service.resolveCountry(PUBLIC_IP_ADDRESS)).contains(Country.DE);
     }
 
     @Test
-    void shouldReturnUnknownWhenApiReturnsNull() {
-        mockWebServer.enqueue(new MockResponse()
-                .setBody("null")
-                .addHeader("Content-Type", "application/json"));
+    void shouldReturnEmptyWhenApiReturnsNonSuccess() {
+        mockWebServer.enqueue(jsonResponse("""
+                {"status":"fail","countryCode":null}
+                """));
 
-        assertThat(service.resolveCountry("1.2.3.4")).isEqualTo(Country.UNKNOWN);
+        assertThat(service.resolveCountry(PUBLIC_IP_ADDRESS)).isEmpty();
+    }
+
+    @Test
+    void shouldReturnEmptyWhenApiReturnsNull() {
+        mockWebServer.enqueue(jsonResponse("null"));
+
+        assertThat(service.resolveCountry(PUBLIC_IP_ADDRESS)).isEmpty();
     }
 
     @Test
     void shouldReturnUnknownForUnrecognizedCountryCode() {
-        mockWebServer.enqueue(new MockResponse()
-                .setBody("""
-                        {"status":"success","countryCode":"XX"}
-                        """)
-                .addHeader("Content-Type", "application/json"));
+        mockWebServer.enqueue(jsonResponse("""
+                {"status":"success","countryCode":"XX"}
+                """));
 
-        assertThat(service.resolveCountry("1.2.3.4")).isEqualTo(Country.UNKNOWN);
+        assertThat(service.resolveCountry(PUBLIC_IP_ADDRESS)).contains(Country.UNKNOWN);
+    }
+
+    @Test
+    void shouldReturnEmptyForLoopbackIp() {
+        assertThat(service.resolveCountry(DEFAULT_PRIVATE_IP)).isEmpty();
     }
 }

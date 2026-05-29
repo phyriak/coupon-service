@@ -34,6 +34,8 @@ class CouponControllerTest {
 
     private static final String CREATE_COUPON = "/api/v1/coupons";
     private static final String USE_COUPON = "/api/v1/coupons/use";
+    private static final Instant FIXED_TIME =
+            Instant.parse("2026-01-01T10:00:00Z");
 
     @Autowired
     MockMvc mockMvc;
@@ -47,25 +49,25 @@ class CouponControllerTest {
     @Test
     void shouldCreateCoupon() throws Exception {
         when(couponService.createCoupon(any()))
-                .thenReturn(new CouponResponse(1L, "SPRING2024", 10, 0, Country.PL, Instant.now()));
+                .thenReturn(new CouponResponse(1L, "TEST100", 10, 0, Country.PL, FIXED_TIME));
 
         mockMvc.perform(post(CREATE_COUPON)
                         .contentType(APPLICATION_JSON)
                         .accept(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCouponRequest("SPRING2024", 10, Country.PL))))
+                                new CreateCouponRequest("TEST100", 10, Country.PL))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.code").value("SPRING2024"))
+                .andExpect(jsonPath("$.code").value("TEST100"))
                 .andExpect(jsonPath("$.usageCount").value(0));
     }
 
     @Test
     void shouldReturnNotFoundWhenCouponDoesNotExist() throws Exception {
-        when(couponService.useCoupon(any(), anyString())).thenThrow(new CouponNotFoundException("GHOST"));
+        when(couponService.useCoupon(any(), anyString())).thenThrow(new CouponNotFoundException("TEST"));
 
         mockMvc.perform(post(USE_COUPON)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UseCouponRequest("GHOST", "user-1"))))
+                        .content(objectMapper.writeValueAsString(new UseCouponRequest("TEST", "user-1"))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.error").value("NOT_FOUND"));
@@ -73,11 +75,11 @@ class CouponControllerTest {
 
     @Test
     void shouldReturnGoneWhenCouponLimitReached() throws Exception {
-        when(couponService.useCoupon(any(), anyString())).thenThrow(new CouponLimitReachedException("USED_UP"));
+        when(couponService.useCoupon(any(), anyString())).thenThrow(new CouponLimitReachedException("TEST10"));
 
         mockMvc.perform(post(USE_COUPON)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UseCouponRequest("USED_UP", "user-1"))))
+                        .content(objectMapper.writeValueAsString(new UseCouponRequest("TEST10", "user-1"))))
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.status").value(410))
                 .andExpect(jsonPath("$.error").value("COUPON_LIMIT_REACHED"));

@@ -45,10 +45,6 @@ public class Coupon extends BaseEntity {
     }
 
     public boolean isAllowedCountry(Country requestCountry) {
-        // UNKNOWN country passes through (fail-open for geolocation failures)
-        if (requestCountry == Country.UNKNOWN) {
-            return true;
-        }
         return this.country == requestCountry;
     }
 }

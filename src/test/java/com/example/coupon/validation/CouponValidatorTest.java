@@ -1,12 +1,10 @@
 package com.example.coupon.validation;
 
 import com.example.coupon.domain.exception.CountryNotAllowedException;
-import com.example.coupon.domain.exception.CouponAlreadyExistsException;
+import com.example.coupon.domain.exception.CountryResolutionException;
 import com.example.coupon.domain.exception.CouponAlreadyUsedException;
-import com.example.coupon.domain.exception.CouponLimitReachedException;
 import com.example.coupon.domain.model.Country;
 import com.example.coupon.domain.model.Coupon;
-import com.example.coupon.repository.CouponRepository;
 import com.example.coupon.repository.CouponUsageRepository;
 import com.example.coupon.service.GeoLocationService;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -24,12 +24,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class CouponValidatorTest {
 
+    public static final String RANDOM_IP = "1.2.3.4";
+    public static final String DUMMY_USER = "dummyUser";
     @Mock
     private GeoLocationService geoLocationService;
     @Mock
     private CouponUsageRepository couponUsageRepository;
-    @Mock
-    private CouponRepository couponRepository;
 
     private CouponValidator validator;
 
@@ -37,8 +37,7 @@ class CouponValidatorTest {
     void set() {
         validator = new CouponValidator(
                 geoLocationService,
-                couponUsageRepository,
-                couponRepository
+                couponUsageRepository
         );
 
     }
@@ -47,63 +46,30 @@ class CouponValidatorTest {
     void shouldPassWhenCouponIsValidAndNotUsed() {
         Coupon coupon = Coupon.create("PL", 3, Country.PL);
 
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.PL);
+        when(geoLocationService.resolveCountry(anyString())).thenReturn(Optional.of(Country.PL));
         when(couponUsageRepository.existsByCouponIdAndUserId(any(), anyString())).thenReturn(false);
 
-        assertDoesNotThrow(() -> validator.validateUsage(coupon, "dummyUser", "1.2.3.4"));
-    }
-
-    @Test
-    void shouldPassWhenUserHasUnknownCountryAndCouponIsNotUsed() {
-        Coupon coupon = Coupon.create("PL", 3, Country.PL);
-
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.UNKNOWN);
-        when(couponUsageRepository.existsByCouponIdAndUserId(any(), anyString())).thenReturn(false);
-
-        assertDoesNotThrow(() -> validator.validateUsage(coupon, "dummyUser", "1.2.3.4"));
-    }
-
-    @Test
-    void shouldThrowWhenCouponAlreadyExist() {
-        when(couponRepository.existsByCode(anyString())).thenReturn(true);
-        assertThrows(CouponAlreadyExistsException.class,
-                () -> validator.validateCreate("code"));
+        assertDoesNotThrow(() -> validator.validateUsage(coupon, DUMMY_USER, RANDOM_IP));
     }
 
     @Test
     void shouldThrownWhenUserCountryIsNotAllowed() {
         Coupon coupon = Coupon.create("PL", 3, Country.PL);
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.DE);
+        when(geoLocationService.resolveCountry(anyString())).thenReturn(Optional.of(Country.DE));
 
         assertThrows(CountryNotAllowedException.class,
-                () -> validator.validateUsage(coupon, "dummyUser", "1.2.3.4"));
+                () -> validator.validateUsage(coupon, DUMMY_USER, RANDOM_IP));
     }
 
     @Test
     void shouldThrowWhenCouponAlreadyUsed() {
         Coupon coupon = Coupon.create("PL", 3, Country.PL);
 
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.PL);
-        when(couponUsageRepository.existsByCouponIdAndUserId(any(), anyString())).thenReturn(true);
+        when(geoLocationService.resolveCountry(anyString()))
+                .thenReturn(Optional.of(Country.PL));
+        when(couponUsageRepository.existsByCouponIdAndUserId(any(),
+                anyString())).thenReturn(true);
         assertThrows(CouponAlreadyUsedException.class,
-                () -> validator.validateUsage(coupon, "dummyUser", "1.2.3.4"));
-    }
-
-    @Test
-    void shouldThrowWhenCouponReachLimit() {
-        Coupon coupon = Coupon.create("PL", 0, Country.PL);
-
-
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.PL);
-        when(couponUsageRepository.existsByCouponIdAndUserId(any(), anyString())).thenReturn(false);
-        assertThrows(CouponLimitReachedException.class,
-                () -> validator.validateUsage(coupon, "dummyUser", "1.2.3.4"));
-    }
-
-    @Test
-    void shouldPassWhenCouponDoesNotExist() {
-        when(couponRepository.existsByCode("CODE")).thenReturn(false);
-
-        assertDoesNotThrow(() -> validator.validateCreate("CODE"));
+                () -> validator.validateUsage(coupon, DUMMY_USER, RANDOM_IP));
     }
 }

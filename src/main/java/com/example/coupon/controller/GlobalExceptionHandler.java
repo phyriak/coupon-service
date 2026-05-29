@@ -61,4 +61,14 @@ public class GlobalExceptionHandler {
         log.error("Unexpected error", ex);
         return ApiErrorResponse.of(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
+
+    @ExceptionHandler(CountryResolutionException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public ApiErrorResponse handleCountryResolution(CountryResolutionException ex) {
+        return ApiErrorResponse.of(
+                503,
+                "COUNTRY_RESOLUTION_FAILED",
+                ex.getMessage()
+        );
+    }
 }

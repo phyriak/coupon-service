@@ -1,6 +1,8 @@
 package com.example.coupon.integration;
 
 import com.example.coupon.BaseIntegrationTest;
+import com.example.coupon.domain.exception.CountryResolutionException;
+import com.example.coupon.domain.exception.CouponAlreadyExistsException;
 import com.example.coupon.domain.exception.CouponAlreadyUsedException;
 import com.example.coupon.domain.exception.CouponLimitReachedException;
 import com.example.coupon.domain.exception.CountryNotAllowedException;
@@ -11,11 +13,13 @@ import com.example.coupon.repository.CouponRepository;
 import com.example.coupon.repository.CouponUsageRepository;
 import com.example.coupon.service.GeoLocationService;
 import com.example.coupon.service.CouponService;
+import org.assertj.core.api.AssertionsForClassTypes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -29,6 +33,11 @@ import static org.mockito.Mockito.when;
 
 class CouponServiceIntegrationTest extends BaseIntegrationTest {
 
+    public static final String ONEUSE_CODE = "ONEUSE";
+    public static final String PLONLY_CODE = "PLONLY";
+    public static final String CONCURRENT_CODE = "CONCURRENT";
+    public static final String TEST_USER = "user-42";
+    public static final String IP_ADDRESS = "1.2.3.4";
     @Autowired
     private CouponService couponService;
 
@@ -45,15 +54,16 @@ class CouponServiceIntegrationTest extends BaseIntegrationTest {
     void setUp() {
         couponUsageRepository.deleteAll();
         couponRepository.deleteAll();
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.PL);
+        when(geoLocationService.resolveCountry(anyString()))
+                .thenReturn(Optional.of(Country.PL));
     }
 
     @Test
     void shouldCreateCoupon() {
-        var request = new CreateCouponRequest("SPRING2024", 10, Country.PL);
+        var request = new CreateCouponRequest(PLONLY_CODE, 10, Country.PL);
         var response = couponService.createCoupon(request);
 
-        assertThat(response.code()).isEqualTo("SPRING2024");
+        assertThat(response.code()).isEqualTo(PLONLY_CODE);
         assertThat(response.usageCount()).isZero();
     }
 
@@ -67,30 +77,62 @@ class CouponServiceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void shouldRejectUsageFromWrongCountry() {
-        when(geoLocationService.resolveCountry(anyString())).thenReturn(Country.DE);
+        when(geoLocationService.resolveCountry(anyString()))
+                .thenReturn(Optional.of(Country.DE));
 
-        couponService.createCoupon(new CreateCouponRequest("PLONLY", 10, Country.PL));
+        couponService.createCoupon(new CreateCouponRequest(PLONLY_CODE, 10, Country.PL));
 
         assertThatThrownBy(() ->
-            couponService.useCoupon(new UseCouponRequest("PLONLY", "user-1"), "1.2.3.4")
-        ).isInstanceOf(CountryNotAllowedException.class);
+            couponService.useCoupon(new UseCouponRequest(PLONLY_CODE, TEST_USER), IP_ADDRESS)
+        ).isInstanceOf(CountryNotAllowedException.class)
+                .hasMessageContaining("Coupon not available in your country: DE");
     }
 
     @Test
     void shouldRejectSecondUsageBySameUser() {
-        couponService.createCoupon(new CreateCouponRequest("ONEUSE", 10, Country.PL));
-        couponService.useCoupon(new UseCouponRequest("ONEUSE", "user-42"), "1.2.3.4");
+        couponService.createCoupon(new CreateCouponRequest(ONEUSE_CODE, 10, Country.PL));
+        couponService.useCoupon(new UseCouponRequest(ONEUSE_CODE, TEST_USER), IP_ADDRESS);
 
         assertThatThrownBy(() ->
-            couponService.useCoupon(new UseCouponRequest("ONEUSE", "user-42"), "1.2.3.4")
-        ).isInstanceOf(CouponAlreadyUsedException.class);
+            couponService.useCoupon(new UseCouponRequest(ONEUSE_CODE, TEST_USER), IP_ADDRESS)
+        ).isInstanceOf(CouponAlreadyUsedException.class)
+                .hasMessageContaining("User user-42 has already used coupon: ONEUSE");
+    }
+
+    @Test
+    void shouldRejectCreateSameCoupon() {
+        CreateCouponRequest couponRequest = new CreateCouponRequest(PLONLY_CODE, 10, Country.PL);
+        couponService.createCoupon(couponRequest);
+
+        assertThatThrownBy(() ->
+                couponService.createCoupon(couponRequest)
+        ).isInstanceOf(CouponAlreadyExistsException.class)
+                .hasMessageContaining("Coupon already exists: PLONLY");
+    }
+
+    @Test
+    void shouldRejectUsageWhenCountryCannotBeResolved() {
+
+        when(geoLocationService.resolveCountry(anyString()))
+                .thenReturn(Optional.empty());
+
+        couponService.createCoupon(
+                new CreateCouponRequest(PLONLY_CODE, 10, Country.PL)
+        );
+
+        AssertionsForClassTypes.assertThatThrownBy(() ->
+                couponService.useCoupon(
+                        new UseCouponRequest(PLONLY_CODE, TEST_USER),
+                        IP_ADDRESS
+                )
+        ).isInstanceOf(CountryResolutionException.class);
     }
 
     @Test
     void shouldRespectUsageLimitUnderConcurrency() throws InterruptedException {
         int limit = 5;
         int threads = 20;
-        couponService.createCoupon(new CreateCouponRequest("CONCURRENT", limit, Country.PL));
+        couponService.createCoupon(new CreateCouponRequest(CONCURRENT_CODE, limit, Country.PL));
 
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger successCount = new AtomicInteger();
@@ -102,7 +144,7 @@ class CouponServiceIntegrationTest extends BaseIntegrationTest {
                 executor.submit(() -> {
                     try {
                         latch.await();
-                        couponService.useCoupon(new UseCouponRequest("CONCURRENT", userId), "1.2.3.4");
+                        couponService.useCoupon(new UseCouponRequest(CONCURRENT_CODE, userId), IP_ADDRESS);
                         successCount.incrementAndGet();
                     } catch (CouponLimitReachedException e) {
                         rejectedCount.incrementAndGet();

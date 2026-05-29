@@ -2,11 +2,14 @@ package com.example.coupon.service;
 
 import com.example.coupon.domain.model.Country;
 
+import java.util.Optional;
+
 public interface GeoLocationService {
 
     /**
-     * Resolves the country for the given IP address.
-     * Returns {@link Country#UNKNOWN} when resolution is not possible
+     * Resolves country from client IP address.
+     * Returns UNKNOWN when private IP detected
+     * Return Empty Optional when Geo Api fails.
      */
-    Country resolveCountry(String ipAddress);
+    Optional<Country> resolveCountry(String ipAddress);
 }

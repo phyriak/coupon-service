@@ -5,7 +5,7 @@ package com.example.coupon.domain.model;
  * UNKNOWN is used as a fallback when geolocation fails.
  */
 public enum Country {
-    PL, DE, FR, GB, US, UNKNOWN;
+    PL, DE, FR, GB, US, CA, UNKNOWN;
 
     public static Country fromCode(String code) {
         if (code == null) {

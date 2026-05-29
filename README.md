@@ -21,7 +21,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local
 or
 
 ```bash
-java -jar target/coupon-service.jar --spring.profiles.active=local
+java -jar target/coupon-service-0.0.x-SNAPSHOT.jar --spring.profiles.active=local
 ```
 
 Configuration for local development is stored in `application-local.yml`.
@@ -63,6 +63,30 @@ Swagger UI is available at:
 ```text
 http://localhost:8090/swagger-ui/index.html
 ```
+
+---
+
+## Local Testing and Geolocation
+
+Coupon redemption requires successful country resolution based on the client IP address.
+
+When running the application locally, requests executed from Swagger UI originate from localhost (`127.0.0.1` or `::1`). These addresses cannot be geolocated and coupon redemption requests will be rejected with `403 Forbidden (COUNTRY_UNKNOWN)`.
+
+To test country-based validation locally, use a tool that allows custom HTTP headers (for example Postman or curl) and provide a public IP address in the `X-Forwarded-For` header.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8090/api/v1/coupons/use \
+  -H "Content-Type: application/json" \
+  -H "X-Forwarded-For: 8.8.8.8" \
+  -d '{
+        "code": "TESTCOUPON",
+        "userId": "user-123"
+      }'
+```
+
+In deployed environments the `X-Forwarded-For` header is expected to be supplied automatically by a reverse proxy or load balancer (for example Nginx, Kubernetes Ingress or AWS ALB).
 
 ---
 
@@ -171,6 +195,7 @@ All business and validation errors are translated into consistent HTTP responses
 | 200 OK | - | Coupon redeemed successfully |
 | 400 Bad Request | VALIDATION_ERROR | Request validation failed |
 | 403 Forbidden | COUNTRY_NOT_ALLOWED | User country is not eligible for the coupon |
+| 403 Forbidden | COUNTRY_UNKNOWN | User country could not be determined |
 | 404 Not Found | NOT_FOUND | Coupon not found |
 | 409 Conflict | COUPON_ALREADY_USED | Coupon already used by this user |
 | 410 Gone | COUPON_LIMIT_REACHED | Coupon usage limit reached |
@@ -308,7 +333,8 @@ A coupon can be redeemed when:
 - the usage limit has not been exceeded
 - the user's resolved country matches the coupon country
 
-If geolocation cannot determine the country, the application returns `Country.UNKNOWN` and applies the configured fail-open strategy.
+If geolocation cannot determine the country, the service returns an empty result
+and the request is rejected with `403 Forbidden`.
 
 ---
 
@@ -346,6 +372,26 @@ This guarantees data consistency and prevents partial updates.
 
 ---
 
+## Client IP Resolution
+
+The client IP address is resolved from the incoming HTTP request and used for geolocation.
+
+When the application runs behind a reverse proxy or load balancer, the real client IP is read
+from the `X-Forwarded-For` header instead of the TCP connection address.
+
+The `X-Forwarded-For` header can contain a comma-separated list of IPs added by each proxy in the chain:
+
+```
+X-Forwarded-For: <client>, <proxy1>, <proxy2>
+```
+
+The application always takes the **first entry**, which represents the original client IP.
+
+If the header is absent or blank, the application falls back to `HttpServletRequest.getRemoteAddr()`,
+which returns the direct TCP connection address.
+
+---
+
 ## Geolocation Resilience
 
 Country resolution depends on an external service (`ip-api.com`).
@@ -353,25 +399,30 @@ Country resolution depends on an external service (`ip-api.com`).
 To improve resilience:
 
 - retry is enabled for network-related failures and timeouts (`ResourceAccessException`)
-- unsuccessful lookups fall back to `Country.UNKNOWN`
+- up to 3 attempts are made before giving up
+- a short wait between attempts avoids hammering an unhealthy service
+- after all attempts are exhausted the fallback returns an empty result, which rejects the request with `403 Forbidden`
 
-This prevents temporary external service outages from affecting coupon redemption.
+This prevents temporary external service outages from silently bypassing country restrictions.
 
 ---
 
-## Fail-Open Strategy for UNKNOWN Country
+## Fail-Closed Strategy for Unresolvable Country
 
-When geolocation cannot determine the country (for example because of service outage, localhost requests or private IP addresses), the application returns `Country.UNKNOWN` and allows the request to proceed.
+When geolocation cannot determine the country (for example because of service outage,
+localhost requests or private IP addresses), the service returns an empty result
+and the request is rejected with `403 Forbidden`.
 
-This is a conscious trade-off between user experience and strict security enforcement.
+Loopback (`127.0.0.1`, `::1`) and private IP addresses are detected before calling the external geolocation provider and are rejected without performing a GeoIP lookup.
 
 Advantages:
 
-- users are not blocked by third-party failures
-- coupon redemption remains available during temporary outages
-- higher overall system availability
+- prevents users from bypassing country restrictions during outages
+- enforces strict country-based access control
+- consistent and predictable behavior regardless of geolocation availability
 
-In security-critical environments this behavior could be changed to fail-closed and reject requests when the country cannot be determined.
+In environments where availability is prioritized over strict enforcement, this behavior
+could be changed to fail-open and allow requests when the country cannot be determined.
 
 ---
 
@@ -382,5 +433,3 @@ Potential future enhancements:
 - Circuit Breaker for geolocation integration
 - support for multiple countries per coupon
 - distributed caching for frequently resolved geolocation results
-
-A Circuit Breaker would prevent repeated calls to an unhealthy geolocation provider, reduce latency during outages and further improve overall system resilience.

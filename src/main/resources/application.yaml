@@ -10,7 +10,7 @@ spring:
 
 geolocation:
   ip-api:
-    url: ${GEO_API_URL:https://ip-api.com/json/{ip}?fields=countryCode,status}
+    url: ${GEO_API_URL:http://ip-api.com/json/{ip}}
     connect-timeout: 1s
     read-timeout: 1s
 
