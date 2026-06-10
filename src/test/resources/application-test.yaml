@@ -10,6 +10,7 @@ geolocation:
   ip-api:
     connect-timeout: 500ms
     read-timeout: 500ms
+    default-country-for-private-ip: PL
 
 resilience4j:
   retry:
@@ -20,3 +21,9 @@ resilience4j:
         retry-exceptions:
           - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
+
+logging:
+  level:
+    org.testcontainers: TRACE
+    org.testcontainers.dockerclient: TRACE
+    com.github.dockerjava: DEBUG

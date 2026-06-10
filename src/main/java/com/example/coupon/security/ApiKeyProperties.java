@@ -1,0 +1,12 @@
+package com.example.coupon.security;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.util.List;
+
+
+@ConfigurationProperties(prefix = "security")
+public record ApiKeyProperties(List<ApiKeyEntry> apiKeys) {
+    public record ApiKeyEntry(String hash, List<String> roles) {
+    }
+}

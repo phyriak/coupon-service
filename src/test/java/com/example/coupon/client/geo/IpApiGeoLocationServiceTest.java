@@ -1,10 +1,11 @@
 package com.example.coupon.client.geo;
 
-import com.example.coupon.BaseIntegrationTest;
+import com.example.coupon.config.BaseIntegrationTest;
 import com.example.coupon.domain.model.Country;
 import okhttp3.mockwebserver.MockResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.testcontainers.containers.PostgreSQLContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,6 +59,18 @@ class IpApiGeoLocationServiceTest extends BaseIntegrationTest {
 
     @Test
     void shouldReturnEmptyForLoopbackIp() {
-        assertThat(service.resolveCountry(DEFAULT_PRIVATE_IP)).isEmpty();
+        assertThat(service.resolveCountry(DEFAULT_PRIVATE_IP)).contains(Country.PL);
+    }
+
+    @Test
+    void dockerShouldBeVisible() {
+        PostgreSQLContainer<?> postgres =
+                new PostgreSQLContainer<>("postgres:16-alpine");
+
+        postgres.start();
+
+        System.out.println(postgres.getJdbcUrl());
+
+        postgres.stop();
     }
 }

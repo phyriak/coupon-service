@@ -16,3 +16,10 @@ logging:
   level:
     com.example.coupon: DEBUG
     org.hibernate.SQL: DEBUG
+
+app:
+  logging:
+    pepper: ${LOGGING_PEPPER:secret-pepper}
+
+geolocation:
+  default-country-for-private-ip: PL

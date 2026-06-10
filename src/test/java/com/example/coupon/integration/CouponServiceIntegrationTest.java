@@ -1,6 +1,6 @@
 package com.example.coupon.integration;
 
-import com.example.coupon.BaseIntegrationTest;
+import com.example.coupon.config.BaseIntegrationTest;
 import com.example.coupon.domain.exception.CountryResolutionException;
 import com.example.coupon.domain.exception.CouponAlreadyExistsException;
 import com.example.coupon.domain.exception.CouponAlreadyUsedException;
@@ -96,7 +96,7 @@ class CouponServiceIntegrationTest extends BaseIntegrationTest {
         assertThatThrownBy(() ->
             couponService.useCoupon(new UseCouponRequest(ONEUSE_CODE, TEST_USER), IP_ADDRESS)
         ).isInstanceOf(CouponAlreadyUsedException.class)
-                .hasMessageContaining("User user-42 has already used coupon: ONEUSE");
+                .hasMessageContaining("User ddbe711a29c4 has already used coupon: ONEUSE");
     }
 
     @Test

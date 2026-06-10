@@ -1,7 +1,12 @@
-package com.example.coupon;
+package com.example.coupon.config;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import okhttp3.mockwebserver.MockWebServer;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -15,6 +20,12 @@ import java.io.IOException;
 public abstract class BaseIntegrationTest {
     protected static final MockWebServer mockWebServer;
 
+    @Autowired
+    protected CircuitBreakerRegistry circuitBreakerRegistry;
+
+    @Autowired
+    protected CacheManager cacheManager;
+
     static {
         try {
             mockWebServer = new MockWebServer();
@@ -22,6 +33,15 @@ public abstract class BaseIntegrationTest {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @BeforeEach
+    void resetCircuitBreakers() {
+        var cache = cacheManager.getCache("geoByIp");
+        if (cache != null) cache.clear();
+
+        circuitBreakerRegistry.getAllCircuitBreakers()
+                .forEach(CircuitBreaker::reset);
     }
 
     @DynamicPropertySource

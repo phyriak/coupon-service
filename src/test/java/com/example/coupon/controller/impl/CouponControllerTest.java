@@ -1,5 +1,6 @@
 package com.example.coupon.controller.impl;
 
+import com.example.coupon.config.NoSecurityConfig;
 import com.example.coupon.domain.exception.CountryNotAllowedException;
 import com.example.coupon.domain.exception.CouponAlreadyUsedException;
 import com.example.coupon.domain.exception.CouponLimitReachedException;
@@ -10,18 +11,19 @@ import com.example.coupon.dto.request.UseCouponRequest;
 import com.example.coupon.dto.response.CouponResponse;
 import com.example.coupon.dto.response.UseCouponResponse;
 import com.example.coupon.service.CouponService;
+import com.example.coupon.web.ClientIpResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -30,21 +32,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(CouponController.class)
+@Import(NoSecurityConfig.class)
 class CouponControllerTest {
 
     private static final String CREATE_COUPON = "/api/v1/coupons";
     private static final String USE_COUPON = "/api/v1/coupons/use";
     private static final Instant FIXED_TIME =
             Instant.parse("2026-01-01T10:00:00Z");
+    private static final String CLIENT_IP = "1.1.1.1";
 
     @Autowired
     MockMvc mockMvc;
 
     @Autowired
     private ObjectMapper objectMapper;
+    @MockitoBean
+    private ClientIpResolver ipResolver;
 
     @MockitoBean
     private CouponService couponService;
+
+    @BeforeEach
+    void setup() {
+        when(ipResolver.resolveClientIp(any())).thenReturn(CLIENT_IP);
+    }
 
     @Test
     void shouldCreateCoupon() throws Exception {

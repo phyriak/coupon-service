@@ -1,6 +1,6 @@
 package com.example.coupon.client.geo;
 
-import com.example.coupon.BaseIntegrationTest;
+import com.example.coupon.config.BaseIntegrationTest;
 import com.example.coupon.domain.model.Country;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.SocketPolicy;
@@ -52,5 +52,15 @@ class IpApiGeoLocationRetryTest extends BaseIntegrationTest {
         assertThat(mockWebServer.takeRequest(100, TimeUnit.MILLISECONDS)).isNotNull();
         assertThat(mockWebServer.takeRequest(100, TimeUnit.MILLISECONDS)).isNotNull();
         assertThat(mockWebServer.takeRequest(100, TimeUnit.MILLISECONDS)).isNotNull();
+    }
+
+    @Test
+    void shouldShortCircuitWhenCircuitIsOpen() throws InterruptedException {
+        circuitBreakerRegistry.circuitBreaker("geoLocation").transitionToOpenState();
+
+        assertThat(service.resolveCountry("8.8.8.8")).isEmpty();
+
+        // no HTTP call should ever leave the service
+        assertThat(mockWebServer.takeRequest(100, TimeUnit.MILLISECONDS)).isNull();
     }
 }

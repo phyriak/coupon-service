@@ -8,6 +8,10 @@ The application validates coupon eligibility based on:
 - usage limit
 - user country resolved from IP address
 
+Access to the API is protected with API-key authentication, and outbound
+geolocation calls are made resilient with retry, a circuit breaker, and a
+short-lived cache.
+
 ---
 
 # Running the Application
@@ -24,7 +28,25 @@ or
 java -jar target/coupon-service-0.0.x-SNAPSHOT.jar --spring.profiles.active=local
 ```
 
-Configuration for local development is stored in `application-local.yml`.
+Configuration for local development is stored in `application-local.yaml`.
+
+## Required environment variables
+
+The application reads the following from the environment (a `.env` template is
+provided as `.env.example`). Note that Spring Boot does **not** read `.env`
+automatically — when running from an IDE, add these to the run configuration's
+environment variables; `docker compose` reads `.env` only for the database
+container.
+
+| Variable | Purpose |
+|----------|---------|
+| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | PostgreSQL connection |
+| `LOGGING_PEPPER` | secret pepper for log pseudonymization |
+| `COUPON_ADMIN_KEY_HASH` | SHA-256 hash of the admin API key |
+| `COUPON_REDEEM_KEY_HASH` | SHA-256 hash of the redeem API key |
+
+The API-key variables must contain the **SHA-256 hash** of the key (a 64-character
+hex string), never the raw key. See [Authentication](#authentication).
 
 ---
 
@@ -32,24 +54,10 @@ Configuration for local development is stored in `application-local.yml`.
 
 Docker Compose is used only for running PostgreSQL.
 
-The repository contains a `.env.example` file with dummy values that can be used as a template.
-
-Create a local `.env` file:
-
 ```bash
 cp .env.example .env
-```
-
-Start PostgreSQL:
-
-```bash
-docker compose up -d
-```
-
-Stop PostgreSQL:
-
-```bash
-docker compose down
+docker compose up -d      # start
+docker compose down       # stop
 ```
 
 After the database is running, start the Spring Boot application locally.
@@ -66,27 +74,76 @@ http://localhost:8090/swagger-ui/index.html
 
 ---
 
-## Local Testing and Geolocation
+# Authentication
 
-Coupon redemption requires successful country resolution based on the client IP address.
+All endpoints except `/actuator/health` require authentication via an API key
+passed in the `X-Api-Key` request header. Authorization is role-based:
 
-When running the application locally, requests executed from Swagger UI originate from localhost (`127.0.0.1` or `::1`). These addresses cannot be geolocated and coupon redemption requests will be rejected with `403 Forbidden (COUNTRY_UNKNOWN)`.
+| Endpoint | Required authority |
+|----------|--------------------|
+| `POST /api/v1/coupons` (create) | `COUPON_ADMIN` |
+| `POST /api/v1/coupons/use` (redeem) | `COUPON_REDEEM` |
+| `GET /actuator/health` | none (public) |
+| anything else | denied |
 
-To test country-based validation locally, use a tool that allows custom HTTP headers (for example Postman or curl) and provide a public IP address in the `X-Forwarded-For` header.
+A request with no key, or a key whose hash matches no configured entry, is
+rejected before reaching the controller. The default authorization rule is
+deny-all, so any endpoint not explicitly permitted is closed by default.
 
-Example:
+## How keys are configured
+
+Keys are defined as a list under `security.api-keys`. Each entry holds the
+**SHA-256 hash** of a key plus the authorities it grants:
+
+```yaml
+security:
+  api-keys:
+    - hash: ${COUPON_ADMIN_KEY_HASH}
+      roles:
+        - COUPON_ADMIN
+        - COUPON_REDEEM      # admin may also redeem
+    - hash: ${COUPON_REDEEM_KEY_HASH}
+      roles:
+        - COUPON_REDEEM
+```
+
+At startup the application builds a `hash -> roles` lookup. On each request it
+computes the SHA-256 of the presented `X-Api-Key` and looks it up; a match
+establishes an authenticated principal carrying the configured authorities.
+
+Design notes:
+
+- **Only hashes are stored in configuration.** The raw key never appears on the
+  server, so a leaked configuration file does not leak usable credentials.
+- **Authorities use `hasAuthority`, not `hasRole`.** The authority strings in the
+  `roles` list, the authority granted by the filter, and the rule in the security
+  configuration are all the same literal (`COUPON_ADMIN`, `COUPON_REDEEM`) — there
+  is no implicit `ROLE_` prefix.
+- **Duplicate hashes fail fast.** Two entries with the same hash cause a clear
+  startup failure rather than silently merging.
+
+## Calling a secured endpoint
 
 ```bash
 curl -X POST http://localhost:8090/api/v1/coupons/use \
   -H "Content-Type: application/json" \
+  -H "X-Api-Key: <raw-redeem-key>" \
   -H "X-Forwarded-For: 8.8.8.8" \
-  -d '{
-        "code": "TESTCOUPON",
-        "userId": "user-123"
-      }'
+  -d '{ "code": "TESTCOUPON", "userId": "user-123" }'
 ```
 
-In deployed environments the `X-Forwarded-For` header is expected to be supplied automatically by a reverse proxy or load balancer (for example Nginx, Kubernetes Ingress or AWS ALB).
+## Generating keys
+
+For anything beyond local testing, use strong random keys and store only their
+hashes in the environment:
+
+```bash
+RAW_KEY=$(openssl rand -hex 32)        # give this to the client (secrets manager)
+echo -n "$RAW_KEY" | sha256sum         # put this hash in COUPON_*_KEY_HASH
+```
+
+The weak placeholder keys used during local development must not be used in any
+deployed environment.
 
 ---
 
@@ -97,23 +154,14 @@ In deployed environments the `X-Forwarded-For` header is expected to be supplied
 ```http
 POST /api/v1/coupons
 Content-Type: application/json
+X-Api-Key: <admin-key>
 ```
-
-Request:
 
 ```json
-{
-  "code": "TESTCOUPON",
-  "usageLimit": 100,
-  "country": "PL"
-}
+{ "code": "TESTCOUPON", "usageLimit": 100, "country": "PL" }
 ```
 
-Response:
-
-```http
-201 Created
-```
+Response `201 Created`:
 
 ```json
 {
@@ -126,45 +174,30 @@ Response:
 }
 ```
 
----
-
 ## Redeem Coupon
 
 ```http
 POST /api/v1/coupons/use
 Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "code": "TESTCOUPON",
-  "userId": "user-123"
-}
-```
-
-Response:
-
-```http
-200 OK
+X-Api-Key: <redeem-key>
 ```
 
 ```json
-{
-  "code": "TESTCOUPON",
-  "userId": "user-123",
-  "message": "Coupon applied successfully"
-}
+{ "code": "TESTCOUPON", "userId": "user-123" }
+```
+
+Response `200 OK`:
+
+```json
+{ "code": "TESTCOUPON", "userId": "user-123", "message": "Coupon applied successfully" }
 ```
 
 ---
 
 ## Error Handling
 
-The application uses centralized exception handling implemented with `@RestControllerAdvice`.
-
-All business and validation errors are translated into consistent HTTP responses and a unified error format:
+The application uses centralized exception handling implemented with
+`@RestControllerAdvice`, producing a unified error format:
 
 ```json
 {
@@ -175,8 +208,6 @@ All business and validation errors are translated into consistent HTTP responses
 }
 ```
 
----
-
 # Error Responses
 
 ## Create Coupon
@@ -185,6 +216,7 @@ All business and validation errors are translated into consistent HTTP responses
 |------------|---------|-------------|
 | 201 Created | - | Coupon created successfully |
 | 400 Bad Request | VALIDATION_ERROR | Request validation failed |
+| 401 Unauthorized / 403 Forbidden | - | Missing or invalid API key, or insufficient authority |
 | 409 Conflict | CONFLICT | Coupon code already exists |
 | 500 Internal Server Error | INTERNAL_ERROR | Unexpected server error |
 
@@ -194,28 +226,40 @@ All business and validation errors are translated into consistent HTTP responses
 |------------|---------|-------------|
 | 200 OK | - | Coupon redeemed successfully |
 | 400 Bad Request | VALIDATION_ERROR | Request validation failed |
+| 401 Unauthorized / 403 Forbidden | - | Missing or invalid API key, or insufficient authority |
 | 403 Forbidden | COUNTRY_NOT_ALLOWED | User country is not eligible for the coupon |
-| 403 Forbidden | COUNTRY_UNKNOWN | User country could not be determined |
 | 404 Not Found | NOT_FOUND | Coupon not found |
 | 409 Conflict | COUPON_ALREADY_USED | Coupon already used by this user |
 | 410 Gone | COUPON_LIMIT_REACHED | Coupon usage limit reached |
+| 503 Service Unavailable | COUNTRY_RESOLUTION_FAILED | Country could not be determined (geolocation unavailable, private/loopback IP with no configured default, or circuit breaker open) |
 | 500 Internal Server Error | INTERNAL_ERROR | Unexpected server error |
+
+Note that an authentication/authorization 403 is produced by the security layer
+and has an empty body, whereas a `COUNTRY_NOT_ALLOWED` 403 comes from the
+application and carries the JSON error body above.
 
 ---
 
 # Integration Tests
 
-Integration tests use Testcontainers with PostgreSQL.
+Integration tests use Testcontainers with PostgreSQL, so each run executes
+against a real PostgreSQL instance rather than mocks or an in-memory database.
 
-Each test execution starts an isolated PostgreSQL container, ensuring tests run against a real PostgreSQL instance instead of mocks or in-memory databases.
+The external geolocation provider is simulated with **MockWebServer**, allowing
+tests to cover timeout handling, retry behaviour, fallback invocation, circuit
+breaker short-circuiting and cache behaviour without calling the real
+`ip-api.com` service.
 
-Benefits:
+Stateful components held in the shared Spring context are reset before each test:
 
-- production-like behavior
-- deterministic execution
-- environment-independent tests
-- verification of JPA mappings and SQL queries
-- testing against the same database engine used in production
+- circuit breakers (`CircuitBreakerRegistry.reset()`), so failures recorded in
+  one test cannot open the circuit in another
+- the geolocation cache, so a cached entry cannot make a later test pass for the
+  wrong reason
+
+Controller-slice tests (`@WebMvcTest`) run with security replaced by a permit-all
+test configuration so they exercise controller and exception-handler behaviour in
+isolation; authentication is covered separately by a full-context test.
 
 Run tests:
 
@@ -229,120 +273,42 @@ mvn test
 
 ## Environment Configuration
 
-The application uses Spring Profiles (`local`, `test`, `production`, etc.) to separate environment-specific configuration.
-
-This allows the same application artifact to be deployed across multiple environments while keeping configuration externalized and production-ready.
-
----
+The application uses Spring Profiles (`local`, `test`, `production`, etc.) to
+separate environment-specific configuration, allowing one artifact to be deployed
+across environments while keeping configuration externalized.
 
 ## Database Versioning
 
-Database schema creation and versioning are managed with Liquibase.
-
-Benefits:
-
-- version-controlled schema changes
-- repeatable deployments
-- migration history tracking
-- consistent database structure across environments
-
----
+Schema creation and versioning are managed with Liquibase, giving
+version-controlled, repeatable, history-tracked migrations.
 
 ## BaseEntity
 
-A shared `BaseEntity` centralizes common persistence fields:
-
-- `id`
-- `version`
-- `createdAt`
-- `updatedAt`
-
-This reduces duplication and guarantees consistent auditing behavior across entities.
-
-The `version` field enables optimistic locking and allows detection of concurrent modifications.
-
----
+A shared `BaseEntity` centralizes `id`, `version`, `createdAt`, and `updatedAt`.
+The `version` field enables optimistic locking.
 
 ## Country Representation
 
-Each coupon is currently assigned to a single country represented by a Java enum.
-
-Advantages:
-
-- compile-time type safety
-- prevention of invalid values
-- simplified validation logic
-- clean and explicit domain model
-
-Current limitations:
-
-- adding a new country requires a code change and redeployment
-- a coupon can be assigned to only one country
-
-Possible future alternatives:
-
-- configurable country definitions loaded from application properties
-- dedicated database table managed through API or administration tools
-- support for multiple countries per coupon using a collection-based relationship
-
----
+Each coupon is assigned a single country represented by a Java enum, giving
+compile-time safety and simple validation, at the cost of needing a code change
+to add a country.
 
 ## Coupon Code Normalization
 
-Coupon codes are normalized to uppercase before validation and persistence.
+Coupon codes are normalized to uppercase before validation and persistence, so
+`testcoupon`, `TESTCOUPON`, and `TestCoupon` are the same coupon.
 
-As a result:
+## Coupon Uniqueness and Data Integrity
 
-- `testcoupon`
-- `TESTCOUPON`
-- `TestCoupon`
-
-are treated as the same coupon.
-
-This eliminates case-sensitivity issues and prevents duplicate coupon definitions.
-
----
-
-## Coupon Uniqueness
-
-Coupon code uniqueness is enforced at the database level using a unique constraint.
-
-This guarantees consistency even under concurrent requests and prevents race conditions that could bypass application-level validation.
-
----
-
-## Data Integrity
-
-Business invariants are enforced both at the application and database level.
-
-Examples:
-
-- unique coupon code constraint
-- unique coupon usage per user
-- optimistic locking through entity versioning
-
-Database constraints act as the final safety net and protect data integrity even under concurrent access.
-
----
-
-## Coupon Redemption Rules
-
-A coupon can be redeemed when:
-
-- the coupon exists
-- the usage limit has not been exceeded
-- the user's resolved country matches the coupon country
-
-If geolocation cannot determine the country, the service returns an empty result
-and the request is rejected with `403 Forbidden`.
-
----
+Uniqueness (coupon code; one usage per user) is enforced with database
+constraints in addition to application checks, so invariants hold even under
+concurrent access. Optimistic locking via entity versioning detects concurrent
+modification.
 
 ## Concurrency and Thread Safety
 
-Coupon redemption is designed to be thread-safe.
-
-Instead of pessimistic locking (`SELECT FOR UPDATE`), usage counters are updated using a single atomic SQL statement:
+Usage counters are updated with a single atomic SQL statement rather than
+pessimistic locking:
 
 ```sql
 UPDATE coupon
@@ -351,85 +317,184 @@ WHERE code = :code
   AND usage_count < usage_limit;
 ```
 
-Benefits:
-
-- no read-modify-write race condition
-- database-level consistency guarantees
-- minimal locking overhead
-- better scalability under concurrent load
-
-Because validation and increment occur within the same statement, there is no timing window where another transaction can invalidate the result.
-
----
+Because validation and increment occur in the same statement, there is no timing
+window in which another transaction can invalidate the result.
 
 ## Transaction Management
 
-Business operations are executed within transactional boundaries using `@Transactional`.
-
-If any step fails during coupon redemption, the entire transaction is rolled back automatically.
-
-This guarantees data consistency and prevents partial updates.
+Business operations run within `@Transactional` boundaries; a failure rolls the
+whole operation back. The external geolocation call is performed **outside** the
+database transaction, so slow or failing HTTP calls never hold a database
+connection.
 
 ---
 
-## Client IP Resolution
+## Authentication and Authorization
 
-The client IP address is resolved from the incoming HTTP request and used for geolocation.
+See [Authentication](#authentication) for configuration. The security model is
+stateless (no sessions, CSRF disabled), uses a custom `X-Api-Key` filter that
+establishes authorities from a hash lookup, and applies role-based rules with a
+deny-all default. Only key hashes are stored server-side.
 
-When the application runs behind a reverse proxy or load balancer, the real client IP is read
-from the `X-Forwarded-For` header instead of the TCP connection address.
+---
 
-The `X-Forwarded-For` header can contain a comma-separated list of IPs added by each proxy in the chain:
+## Client IP Resolution Policy
 
+The client IP used for geolocation is resolved from the incoming request. Because
+the `X-Forwarded-For` header is client-controlled, it is only trusted under
+specific conditions:
+
+- The header is honoured **only when the direct connection comes from a trusted
+  proxy** (`ip-resolution.trusted-proxies`, matched with proper CIDR semantics
+  for both IPv4 and IPv6). A client connecting directly cannot spoof its country
+  by setting the header — the header is ignored and the real connection address
+  is used.
+- When honoured, the chain is walked from the right, skipping trusted proxies, to
+  find the first untrusted hop (the real client). The value must be a valid IP
+  literal; a non-IP value (e.g. a hostname) is rejected so that attacker-supplied
+  input is never passed to a DNS lookup.
+- If there is no trusted proxy in front, or no header, the direct connection
+  address (`getRemoteAddr()`) is used.
+
+```yaml
+ip-resolution:
+  trust-forwarded-headers: true
+  trusted-proxies:
+    - 10.0.0.0/8        # load balancer / ingress range
+    - 127.0.0.1/32      # IPv4 loopback (local testing)
+    - ::1               # IPv6 loopback (local testing)
 ```
-X-Forwarded-For: <client>, <proxy1>, <proxy2>
-```
 
-The application always takes the **first entry**, which represents the original client IP.
+> **Operational requirement:** trust only proxy addresses you actually control.
+> In production this list should contain your load balancer / ingress range. The
+> loopback entries exist so that local testing — sending `X-Forwarded-For` from
+> `curl`/Postman on the same host — works regardless of whether the connection
+> uses IPv4 or IPv6. Never add a public range to this list.
 
-If the header is absent or blank, the application falls back to `HttpServletRequest.getRemoteAddr()`,
-which returns the direct TCP connection address.
+### Private and loopback addresses
+
+Loopback (`127.0.0.1`, `::1`) and private/site-local addresses are detected
+**before** any external lookup and never sent to the geolocation provider. What
+happens next depends on configuration:
+
+- If `geolocation.default-country-for-private-ip` is **set**, that country is
+  returned for private/loopback IPs. This is used **only in `local`** (set to
+  `PL` in `application-local.yaml`) so that redemption can be exercised locally
+  without a public IP.
+- If it is **unset** (the default, and the case in all non-local environments),
+  private/loopback resolution returns no country and the request is rejected with
+  `503 COUNTRY_RESOLUTION_FAILED` — i.e. **fail-closed**.
+
+This keeps the strict, fail-closed behaviour in deployed environments while
+allowing a deliberate, profile-scoped convenience for local development. Because
+the default is a typed `Country`, an invalid value in configuration fails at
+startup.
 
 ---
 
 ## Geolocation Resilience
 
-Country resolution depends on an external service (`ip-api.com`).
+Country resolution depends on the external `ip-api.com` service and is wrapped
+with two Resilience4j decorators plus a cache:
 
-To improve resilience:
+```java
+@Cacheable(cacheNames = "geoByIp", unless = "#result == null")
+@Retry(name = "geoLocation", fallbackMethod = "resolveFallback")
+@CircuitBreaker(name = "geoLocation")
+public Optional<Country> resolveCountry(String ipAddress) { ... }
+```
 
-- retry is enabled for network-related failures and timeouts (`ResourceAccessException`)
-- up to 3 attempts are made before giving up
-- a short wait between attempts avoids hammering an unhealthy service
-- after all attempts are exhausted the fallback returns an empty result, which rejects the request with `403 Forbidden`
+With the default Resilience4j aspect order, Retry is the outermost of the two
+resilience decorators (`Retry(CircuitBreaker(call))`), so the fallback is declared
+on `@Retry` and is only invoked once all attempts are exhausted; each individual
+attempt is recorded by the circuit breaker.
 
-This prevents temporary external service outages from silently bypassing country restrictions.
+### Retry
+
+- up to 3 attempts for network failures/timeouts (`ResourceAccessException`)
+- short wait between attempts; 1-second connect/read timeouts bound each attempt
+
+### Circuit Breaker
+
+- a count-based sliding window tracks recent failures and slow calls
+- when thresholds are exceeded the circuit opens and calls fail immediately
+  (`CallNotPermittedException`) without an HTTP request or a blocked thread
+- `CallNotPermittedException` is not retried and goes straight to the fallback
+- the circuit transitions automatically to half-open after a wait period
+
+```yaml
+resilience4j:
+  circuitbreaker:
+    instances:
+      geoLocation:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 800ms
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+  retry:
+    instances:
+      geoLocation:
+        max-attempts: 3
+        wait-duration: 200ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+```
+
+In all failure scenarios (exhausted retries or open circuit) the fallback returns
+an empty result, and the request is rejected with `503` — preventing a transient
+outage from silently bypassing country restrictions.
 
 ---
 
-## Fail-Closed Strategy for Unresolvable Country
+## Caching
 
-When geolocation cannot determine the country (for example because of service outage,
-localhost requests or private IP addresses), the service returns an empty result
-and the request is rejected with `403 Forbidden`.
+Resolved countries are cached in-memory with **Caffeine** to reduce calls to
+`ip-api.com` and stay within its rate limits. The cache key is the IP address.
 
-Loopback (`127.0.0.1`, `::1`) and private IP addresses are detected before calling the external geolocation provider and are rejected without performing a GeoIP lookup.
+```yaml
+spring:
+  cache:
+    cache-names: geoByIp
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=1h
+```
 
-Advantages:
+> Note: this block must be nested under `spring:` (i.e. `spring.cache.*`). If it
+> is placed elsewhere, Spring Boot ignores it and falls back to an unbounded cache
+> with no TTL — caching still appears to work, but `maximumSize`/`expireAfterWrite`
+> are silently dropped.
 
-- prevents users from bypassing country restrictions during outages
-- enforces strict country-based access control
-- consistent and predictable behavior regardless of geolocation availability
+Behaviour and rationale:
 
-In environments where availability is prioritized over strict enforcement, this behavior
-could be changed to fail-open and allow requests when the country cannot be determined.
+- **Successful resolutions are cached; failures are not.** The
+  `unless = "#result == null"` guard keeps empty results out of the cache (Spring
+  unwraps the `Optional`, so an empty result is `null` in the expression). Without
+  this, a transient outage would be frozen for the cache TTL and turn a brief blip
+  into sustained failures.
+- **Bounded and expiring.** `maximumSize` caps memory and bounds the impact of
+  many distinct keys; `expireAfterWrite` ensures geolocation data does not go
+  stale indefinitely. (Caffeine must be on the classpath for these to take effect.)
+- A cache hit short-circuits the external call entirely, so repeat redemptions
+  from the same IP do not contact the provider.
+
+---
+
+## Log Anonymization
+
+User identifiers and IP addresses are pseudonymized in logs using SHA-256 with an
+application-specific secret (pepper). The geolocation client logs only the
+anonymized IP, never the raw value or the full provider response.
 
 ---
 
 ## Future Improvements
 
-Potential future enhancements:
-
-- Circuit Breaker for geolocation integration
+- rate limiting on redemption to further blunt coupon-code enumeration
+- circuit breaker state exposed via an Actuator health indicator
+- distributed cache (e.g. Redis) if the service is scaled to multiple instances
 - support for multiple countries per coupon
-- distributed caching for frequently resolved geolocation results

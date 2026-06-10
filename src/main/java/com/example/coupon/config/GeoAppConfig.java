@@ -10,7 +10,7 @@ import org.springframework.web.client.RestClient;
 @Configuration
 @RequiredArgsConstructor
 public class GeoAppConfig {
-    private final IpApiProperties properties;
+    private final GeoApiProperties properties;
 
     @Bean
     public RestClient restClient() {

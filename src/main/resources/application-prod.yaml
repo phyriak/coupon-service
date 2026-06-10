@@ -13,3 +13,7 @@ spring:
 logging:
   level:
     com.example.coupon: INFO
+
+app:
+  logging:
+    pepper: ${LOGGING_PEPPER}

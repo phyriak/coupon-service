@@ -1,5 +1,6 @@
 package com.example.coupon.config;
 
+import com.example.coupon.domain.model.Country;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.convert.DurationUnit;
@@ -10,11 +11,12 @@ import java.time.temporal.ChronoUnit;
 
 @ConfigurationProperties(prefix = "geolocation.ip-api")
 @Validated
-public record IpApiProperties(
+public record GeoApiProperties(
         @NotBlank String url,
         @DurationUnit(ChronoUnit.SECONDS)
         Duration connectTimeout,
         @DurationUnit(ChronoUnit.SECONDS)
-        Duration readTimeout
+        Duration readTimeout,
+         Country defaultCountryForPrivateIp
 ) {
 }

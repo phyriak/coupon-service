@@ -8,13 +8,51 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
 
+  cache:
+    cache-names: geoByIp
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=1h
+
 geolocation:
   ip-api:
     url: ${GEO_API_URL:http://ip-api.com/json/{ip}}
     connect-timeout: 1s
     read-timeout: 1s
 
+ip-resolution:
+   trust-forwarded-headers: true
+   trusted-proxies:
+     - 10.0.0.0/8        # your LB / ingress range
+     - 127.0.0.1/32
+     - ::1  # local remote ip
+
+security:
+  api-keys:
+    - hash: ${COUPON_ADMIN_KEY_HASH}
+      roles:
+        - COUPON_ADMIN
+        - COUPON_REDEEM      # admin can also redeem, if you want that
+    - hash: ${COUPON_REDEEM_KEY_HASH}
+      roles:
+        - COUPON_REDEEM
+
 resilience4j:
+  circuitbreaker:
+    instances:
+      geoLocation:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 800ms
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.RestClientException
+
   retry:
     instances:
       geoLocation:

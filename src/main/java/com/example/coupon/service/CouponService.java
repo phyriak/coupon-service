@@ -1,5 +1,6 @@
 package com.example.coupon.service;
 
+import com.example.coupon.domain.model.Country;
 import com.example.coupon.dto.request.CreateCouponRequest;
 import com.example.coupon.dto.request.UseCouponRequest;
 import com.example.coupon.dto.response.CouponResponse;
